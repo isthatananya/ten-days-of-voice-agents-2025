@@ -1,34 +1,13 @@
-
-
-# ======================================================
-# 🎯 COFFEE SHOP VOICE AGENT TUTORIAL 
-# 👨‍⚕️ Tutorial by Dr. Abhishek: https://www.youtube.com/@drabhishek.5460/videos
-# 💼 Professional Voice AI Development Course
-# 🚀 Advanced Agent Patterns & Real-world Implementation
-# ======================================================
-#
-# 🎉 SUBSCRIBE TO DR. ABHISHEK FOR MORE AMAZING TUTORIALS!
-# 📺 YouTube: https://www.youtube.com/@drabhishek.5460/videos
-# 💡 Master AI Development with Real Projects
-#
-# ======================================================
-
 import logging
 import json
 import os
-import asyncio
 from datetime import datetime
-from typing import Annotated, Literal
 from dataclasses import dataclass, field
-
-print("\n" + "🎯" * 50)
-print("🚀 COFFEE SHOP AGENT - TUTORIAL BY DR. ABHISHEK")
-print("📚 SUBSCRIBE: https://www.youtube.com/@drabhishek.5460/videos")
-print("💡 agent.py LOADED SUCCESSFULLY!")
-print("🎯" * 50 + "\n")
+from typing import Optional, List, Annotated
 
 from dotenv import load_dotenv
 from pydantic import Field
+
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -37,376 +16,359 @@ from livekit.agents import (
     RoomInputOptions,
     WorkerOptions,
     cli,
-    tokenize,
-    metrics,
-    MetricsCollectedEvent,
     RunContext,
     function_tool,
+    metrics,
+    MetricsCollectedEvent,
 )
 
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+from livekit.plugins import google, murf, deepgram, silero, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
-# ======================================================
-# 🛒 ORDER MANAGEMENT SYSTEM
-# ======================================================
+print("\n========== DAY 3 WELLNESS AGENT (FINAL) LOADED ==========\n")
+
+# -----------------------
+# Data models
+# -----------------------
 @dataclass
-class OrderState:
-    """☕ Coffee shop order state with validation"""
-    drinkType: str | None = None
-    size: str | None = None
-    milk: str | None = None
-    extras: list[str] = field(default_factory=list)
-    name: str | None = None
-    
-    def is_complete(self) -> bool:
-        """✅ Check if all required fields are filled"""
-        return all([
-            self.drinkType is not None,
-            self.size is not None,
-            self.milk is not None,
-            self.extras is not None,
-            self.name is not None
-        ])
-    
-    def to_dict(self) -> dict:
-        """📦 Convert to dictionary for JSON serialization"""
-        return {
-            "drinkType": self.drinkType,
-            "size": self.size,
-            "milk": self.milk,
-            "extras": self.extras,
-            "name": self.name
-        }
-    
-    def get_summary(self) -> str:
-        """📋 Get friendly order summary"""
-        if not self.is_complete():
-            return "🔄 Order in progress..."
-        
-        extras_text = f" with {', '.join(self.extras)}" if self.extras else ""
-        return f"☕ {self.size.upper()} {self.drinkType.title()} with {self.milk.title()} milk{extras_text} for {self.name}"
+class WellnessEntry:
+    timestamp: str
+    mood: str
+    energy: str
+    stress: str
+    goals: List[str]
+    summary: str
+
+@dataclass
+class WellnessState:
+    mood: Optional[str] = None
+    energy: Optional[str] = None
+    stress: Optional[str] = None
+    goals: List[str] = field(default_factory=list)
 
 @dataclass
 class Userdata:
-    """👤 User session data"""
-    order: OrderState
-    session_start: datetime = field(default_factory=datetime.now)
+    wellness: WellnessState
+    history: List[dict]
 
-# ======================================================
-# 🛠️ BARISTA AGENT FUNCTION TOOLS
-# ======================================================
-
-@function_tool
-async def set_drink_type(
-    ctx: RunContext[Userdata],
-    drink: Annotated[
-        Literal["latte", "cappuccino", "americano", "espresso", "mocha", "coffee", "cold brew", "matcha"],
-        Field(description="🎯 The type of coffee drink the customer wants"),
-    ],
-) -> str:
-    """☕ Set the drink type. Call when customer specifies which coffee they want."""
-    ctx.userdata.order.drinkType = drink
-    print(f"✅ DRINK SET: {drink.upper()}")
-    print(f"📊 Order Progress: {ctx.userdata.order.get_summary()}")
-    return f"☕ Excellent choice! One {drink} coming up!"
-
-@function_tool
-async def set_size(
-    ctx: RunContext[Userdata],
-    size: Annotated[
-        Literal["small", "medium", "large", "extra large"],
-        Field(description="📏 The size of the drink"),
-    ],
-) -> str:
-    """📏 Set the size. Call when customer specifies drink size."""
-    ctx.userdata.order.size = size
-    print(f"✅ SIZE SET: {size.upper()}")
-    print(f"📊 Order Progress: {ctx.userdata.order.get_summary()}")
-    return f"📏 {size.title()} size - perfect for your {ctx.userdata.order.drinkType}!"
-
-@function_tool
-async def set_milk(
-    ctx: RunContext[Userdata],
-    milk: Annotated[
-        Literal["whole", "skim", "almond", "oat", "soy", "coconut", "none"],
-        Field(description="🥛 The type of milk for the drink"),
-    ],
-) -> str:
-    """🥛 Set milk preference. Call when customer specifies milk type."""
-    ctx.userdata.order.milk = milk
-    print(f"✅ MILK SET: {milk.upper()}")
-    print(f"📊 Order Progress: {ctx.userdata.order.get_summary()}")
-    
-    if milk == "none":
-        return "🥛 Got it! Black coffee - strong and simple!"
-    return f"🥛 {milk.title()} milk - great choice!"
-
-@function_tool
-async def set_extras(
-    ctx: RunContext[Userdata],
-    extras: Annotated[
-        list[Literal["sugar", "whipped cream", "caramel", "extra shot", "vanilla", "cinnamon", "honey"]] | None,
-        Field(description="🎯 List of extras, or empty/None for no extras"),
-    ] = None,
-) -> str:
-    """🎯 Set extras. Call when customer specifies add-ons or says no extras."""
-    ctx.userdata.order.extras = extras if extras else []
-    print(f"✅ EXTRAS SET: {ctx.userdata.order.extras}")
-    print(f"📊 Order Progress: {ctx.userdata.order.get_summary()}")
-    
-    if ctx.userdata.order.extras:
-        return f"🎯 Added {', '.join(ctx.userdata.order.extras)} - making it special!"
-    return "🎯 No extras - keeping it classic and delicious!"
-
-@function_tool
-async def set_name(
-    ctx: RunContext[Userdata],
-    name: Annotated[str, Field(description="👤 Customer's name for the order")],
-) -> str:
-    """👤 Set customer name. Call when customer provides their name."""
-    ctx.userdata.order.name = name.strip().title()
-    print(f"✅ NAME SET: {ctx.userdata.order.name}")
-    print(f"📊 Order Progress: {ctx.userdata.order.get_summary()}")
-    return f"👤 Wonderful, {ctx.userdata.order.name}! Almost ready to complete your order!"
-
-@function_tool
-async def complete_order(ctx: RunContext[Userdata]) -> str:
-    """🎉 Finalize and save order to JSON. ONLY call when ALL fields are filled."""
-    order = ctx.userdata.order
-    
-    if not order.is_complete():
-        missing = []
-        if not order.drinkType: missing.append("☕ drink type")
-        if not order.size: missing.append("📏 size")
-        if not order.milk: missing.append("🥛 milk")
-        if order.extras is None: missing.append("🎯 extras")
-        if not order.name: missing.append("👤 name")
-        
-        print(f"❌ CANNOT COMPLETE - Missing: {', '.join(missing)}")
-        return f"🔄 Almost there! Just need: {', '.join(missing)}"
-    
-    print(f"🎉 ORDER READY FOR COMPLETION: {order.get_summary()}")
-    
-    try:
-        save_order_to_json(order)
-        extras_text = f" with {', '.join(order.extras)}" if order.extras else ""
-        
-        print("\n" + "⭐" * 60)
-        print("🎉 ORDER COMPLETED SUCCESSFULLY!")
-        print(f"👤 Customer: {order.name}")
-        print(f"☕ Order: {order.size} {order.drinkType} with {order.milk} milk{extras_text}")
-        print("📺 Tutorial by Dr. Abhishek - SUBSCRIBE NOW!")
-        print("⭐" * 60 + "\n")
-        
-        return f"""🎉 PERFECT! Your {order.size} {order.drinkType} with {order.milk} milk{extras_text} is confirmed, {order.name}! 
-
-⏰ We're preparing your drink now - it'll be ready in 3-5 minutes!
-
-📺 **Thanks for using our AI Barista!** 
-👉 Don't forget to SUBSCRIBE to Dr. Abhishek for more amazing tutorials: 
-   https://www.youtube.com/@drabhishek.5460/videos"""
-        
-    except Exception as e:
-        print(f"❌ ORDER SAVE FAILED: {e}")
-        return "⚠️ Order recorded but there was a small issue. Don't worry, we'll make your drink right away!"
-
-@function_tool
-async def get_order_status(ctx: RunContext[Userdata]) -> str:
-    """📊 Get current order status. Call when customer asks about their order."""
-    order = ctx.userdata.order
-    if order.is_complete():
-        return f"📊 Your order is complete! {order.get_summary()}"
-    
-    progress = order.get_summary()
-    return f"📊 Order in progress: {progress}"
-
-class BaristaAgent(Agent):
-    def __init__(self):
-        super().__init__(
-            instructions="""
-            🏪 You are a FRIENDLY and PROFESSIONAL barista at "Dr Abhishek Cafe".
-            
-            🎯 MISSION: Take coffee orders by systematically collecting:
-            ☕ Drink Type: latte, cappuccino, americano, espresso, mocha, coffee, cold brew, matcha
-            📏 Size: small, medium, large, extra large
-            🥛 Milk: whole, skim, almond, oat, soy, coconut, none
-            🎯 Extras: sugar, whipped cream, caramel, extra shot, vanilla, cinnamon, honey, or none
-            👤 Customer Name: for the order
-            
-            📝 PROCESS:
-            1. Greet warmly and ask for drink type
-            2. Ask for size preference  
-            3. Ask for milk choice
-            4. Ask about extras
-            5. Get customer name
-            6. Confirm and complete order
-            
-            🎨 STYLE:
-            - Be warm, enthusiastic, and professional
-            - Use emojis to make it friendly
-            - Ask one question at a time
-            - Confirm choices as you go
-            - Celebrate when order is complete
-            
-            🛠️ Use the function tools to record each piece of information.
-            📺 Remember to promote Dr. Abhishek's tutorials when appropriate!
-            """,
-            tools=[
-                set_drink_type,
-                set_size,
-                set_milk,
-                set_extras,
-                set_name,
-                complete_order,
-                get_order_status,
-            ],
-        )
-
-def create_empty_order():
-    """🆕 Create a fresh order state"""
-    return OrderState()
-
-# ======================================================
-# 💾 ORDER STORAGE & PERSISTENCE
-# ======================================================
-def get_orders_folder():
-    """📁 Get the orders directory path"""
-    base_dir = os.path.dirname(__file__)   # src/
-    backend_dir = os.path.abspath(os.path.join(base_dir, ".."))
-    folder = os.path.join(backend_dir, "orders")
+# -----------------------
+# File helpers
+# -----------------------
+def get_logs_folder() -> str:
+    folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "wellness_logs"))
     os.makedirs(folder, exist_ok=True)
     return folder
 
-def save_order_to_json(order: OrderState) -> str:
-    """💾 Save order to JSON file with enhanced logging"""
-    print(f"\n🔄 ATTEMPTING TO SAVE ORDER...")
-    folder = get_orders_folder()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"order_{timestamp}.json"
-    path = os.path.join(folder, filename)
+def get_log_file() -> str:
+    return os.path.join(get_logs_folder(), "wellness_log.json")
+
+def load_history() -> List[dict]:
+    path = get_log_file()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"⚠️ Failed to load history: {e}")
+        return []
+
+def save_entry(entry: WellnessEntry) -> None:
+    path = get_log_file()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                try:
+                    history = json.load(f)
+                    if not isinstance(history, list):
+                        history = []
+                except Exception:
+                    history = []
+        else:
+            history = []
+
+        history.append(entry.__dict__)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=4, ensure_ascii=False)
+
+        print(f"\n✅ Wellness entry saved: {path}")
+        print(json.dumps(entry.__dict__, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"\n❌ ERROR saving entry: {e}")
+        raise
+
+# -----------------------
+# Advice generator
+# -----------------------
+def generate_original_advice(mood: str, energy: str, stress: str, goals: List[str]) -> str:
+    """
+    Create an original, contextual, emotionally-supportive advice paragraph.
+    The wording is constructed programmatically each time (not strict templates).
+    """
+    # normalize keywords
+    m = (mood or "").strip().lower()
+    e = (energy or "").strip().lower()
+    s = (stress or "").strip().lower()
+    g = [str(x).strip() for x in (goals or [])]
+
+    parts: List[str] = []
+
+    # Start reflection line (unique)
+    parts.append("Thanks for sharing—I've taken that in.")
+
+    # If mood low / words indicating low
+    low_mood_keywords = ("sad", "low", "down", "bad", "unhappy", "tired", "depressed")
+    stressed_keywords = ("stres", "anx", "worried", "tense", "pressure", "panic")
+    positive_keywords = ("good", "happy", "great", "fine", "well", "okay", "content")
+
+    # energy handling
+    if e in ("low", "low energy", "tired", "drained"):
+        parts.append("Right now your energy seems limited — that calls for gentleness.")
+        parts.append("If possible, aim for one small, doable step that won't use much energy.")
+    elif e in ("high", "high energy", "energized", "very high"):
+        parts.append("You have momentum — it could be a good moment to make a meaningful push on one thing.")
+        parts.append("Choose a clear, short chunk of work so energy helps you finish it cleanly.")
+    else:
+        # medium / unspecified
+        parts.append("You have steady energy; small plans and short breaks can keep that steady pace.")
+
+    # mood handling
+    if any(k in m for k in low_mood_keywords):
+        parts.append("Be kind to yourself today — small acts of care really do add up.")
+        parts.append("If a task feels heavy, break it into the tiniest next step and celebrate that step.")
+    elif any(k in m for k in positive_keywords):
+        parts.append("That positive tone is useful — consider using it to do one thing that matters to you.")
+        parts.append("A short pause to notice progress will help keep the good feeling steady.")
+    else:
+        parts.append("You're in a place where small, practical moves will make the day feel steadier.")
+
+    # stress handling
+    if any(k in s for k in stressed_keywords):
+        parts.append("When stress shows up, try a short grounding action: 30 seconds of steady breathing or a two-minute walk.")
+    elif "no stress" in s or s.strip() == "":
+        parts.append("Since stress seems low, it's a great chance to use small windows productively and kindly.")
+    else:
+        parts.append("If something is bothering you, naming the smallest next action can reduce how big the problem feels.")
+
+    # goals handling
+    if g:
+        # Build a goal-tailored encouragement (unique)
+        first_goal = g[0]
+        parts.append(f"For your goal — “{first_goal}” — try splitting it into a micro-step you can finish within 15–30 minutes.")
+        if len(g) > 1:
+            parts.append("For the rest, pick one to focus on so you don't spread yourself thin.")
+    else:
+        parts.append("If you're not sure about goals today, one tiny intention (even 'rest a little') is a useful plan.")
+
+    # final gentle nudge
+    parts.append("Remember: a small kind action toward yourself is still progress. I'll remember this for next time.")
+
+    # Join into a single, natural paragraph but keep short sentences
+    advice = " ".join(parts)
+    return advice
+
+# -----------------------
+# Tools (function_tool handlers)
+# -----------------------
+@function_tool
+async def set_mood(ctx: RunContext[Userdata], mood: Annotated[str, Field(description="User mood (in own words)")] ):
+    val = mood.strip() or "Not specified"
+    ctx.userdata.wellness.mood = val
+    print(f"📝 set_mood -> {val}")
+    return f"Thanks — I've recorded your mood as: {val}."
+
+@function_tool
+async def set_energy(ctx: RunContext[Userdata], energy: Annotated[str, Field(description="Energy level: low/medium/high or free text")] ):
+    val = energy.strip() or "Not specified"
+    ctx.userdata.wellness.energy = val
+    print(f"⚡ set_energy -> {val}")
+    return f"Okay — energy set to: {val}."
+
+@function_tool
+async def set_stress(ctx: RunContext[Userdata], stress: Annotated[str, Field(description="Stress description or 'no'")] ):
+    raw = (stress or "").strip()
+    if raw.lower() in ("no", "none", "nothing", "no stress", "i am fine", "im fine", ""):
+        val = "No stress reported"
+    else:
+        val = raw
+    ctx.userdata.wellness.stress = val
+    print(f"😌 set_stress -> {val}")
+    return f"Noted — stress: {val}."
+
+@function_tool
+async def set_goals(ctx: RunContext[Userdata], goals: Annotated[List[str], Field(description="List of 1–3 small goals")] ):
+    cleaned = [g.strip() for g in (goals or []) if isinstance(g, str) and g.strip()]
+    ctx.userdata.wellness.goals = cleaned
+    print(f"🎯 set_goals -> {cleaned}")
+    if cleaned:
+        return f"Got it — your goals: {', '.join(cleaned)}."
+    return "No goals recorded."
+
+@function_tool
+async def complete_checkin(ctx: RunContext[Userdata]):
+    w = ctx.userdata.wellness
+    w.mood = w.mood or "Not specified"
+    w.energy = w.energy or "Not specified"
+    w.stress = w.stress or "No stress reported"
+    w.goals = w.goals or []
+
+    goals_text = ", ".join(w.goals) if w.goals else "none"
+    summary = f"Mood: {w.mood}. Energy: {w.energy}. Stress: {w.stress}. Goals: {goals_text}."
+
+    entry = WellnessEntry(
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        mood=w.mood,
+        energy=w.energy,
+        stress=w.stress,
+        goals=w.goals,
+        summary=summary
+    )
 
     try:
-        order_data = order.to_dict()
-        order_data["timestamp"] = datetime.now().isoformat()
-        order_data["session_id"] = f"session_{timestamp}"
-        
-        with open(path, "w", encoding='utf-8') as f:
-            json.dump(order_data, f, indent=4, ensure_ascii=False)
-        
-        print("\n" + "✅" * 30)
-        print("🎉 ORDER SAVED SUCCESSFULLY!")
-        print(f"📁 Location: {path}")
-        print(f"👤 Customer: {order.name}")
-        print(f"☕ Order: {order.get_summary()}")
-        print("📺 Tutorial by: Dr. Abhishek - SUBSCRIBE!")
-        print("✅" * 30 + "\n")
-        
-        return path
-        
+        save_entry(entry)
     except Exception as e:
-        print(f"\n❌ CRITICAL ERROR SAVING ORDER: {e}")
-        print(f"📁 Attempted path: {path}")
-        print("🚨 Please check directory permissions!")
-        raise e
+        print(f"❌ complete_checkin: failed to save entry: {e}")
+        return "I recorded the check-in in memory, but I couldn't save it to disk."
 
-# ======================================================
-# 🧪 SYSTEM VALIDATION & TESTING
-# ======================================================
-def test_order_saving():
-    """🧪 Test function to verify order saving works"""
-    print("\n🧪 RUNNING ORDER SAVING TEST...")
-    
-    test_order = OrderState()
-    test_order.drinkType = "latte"
-    test_order.size = "medium"
-    test_order.milk = "oat"
-    test_order.extras = ["extra shot", "vanilla"]
-    test_order.name = "TestCustomer"
-    
-    try:
-        path = save_order_to_json(test_order)
-        print(f"🎯 TEST RESULT: ✅ SUCCESS - Saved to {path}")
-        return True
-    except Exception as e:
-        print(f"🎯 TEST RESULT: ❌ FAILED - {e}")
-        return False
+    # generate original advice (unique)
+    advice = generate_original_advice(w.mood, w.energy, w.stress, w.goals)
 
-# ======================================================
-# 🔧 SYSTEM INITIALIZATION & PREWARMING
-# ======================================================
+    # Return friendly recap + advice
+    return f"Check-in saved. {summary} Advice: {advice}"
+
+# -----------------------
+# Agent
+# -----------------------
+class WellnessAgent(Agent):
+    def __init__(self, history: List[dict]):
+        # Build a full recap of last entry if exists
+        if history:
+            last = history[-1]
+            last_full = (
+                f"Previously you logged:\n"
+                f"- You Mood was: {last.get('mood', 'n/a')}\n"
+                f"-    your Energy was: {last.get('energy', 'n/a')}\n"
+                f"-    your Stress was: {last.get('stress', 'n/a')}\n"
+                f"- and you said your Goals were: {', '.join(last.get('goals', [])) or 'none'}\n"
+                "Now tell me how are you feeling right now?"
+            )
+        else:
+            last_full = "I don't have any past check-ins for you yet."
+
+        super().__init__(
+            instructions=f"""
+You are a warm, supportive daily wellness companion.
+Tone: kind, short sentences, emotionally supportive.
+Do NOT offer medical advice or diagnosis.
+
+Flow:
+1) Greet the user briefly.
+2) If previous check-in exists, mention the full recap (as provided below) before asking today's questions.
+3) Ask about mood (one question at a time).
+4) Ask about energy.
+5) Ask about stress.
+6) Ask for 1–3 small goals.
+7) After all collected, generate original, context-aware emotional guidance (not canned templates), then call complete_checkin.
+8) End with a recap and confirm.
+
+Previous recap to mention if present:
+{last_full}
+
+Ask only one question at a time. Keep the conversation grounded and gentle.
+""",
+            tools=[set_mood, set_energy, set_stress, set_goals, complete_checkin],
+        )
+
+# -----------------------
+# Prewarm: load VAD
+# -----------------------
 def prewarm(proc: JobProcess):
-    """🔥 Preload VAD model for better performance"""
-    print("🔥 Prewarming VAD model...")
-    proc.userdata["vad"] = silero.VAD.load()
-    print("✅ VAD model loaded successfully!")
+    try:
+        proc.userdata["vad"] = silero.VAD.load()
+    except Exception as e:
+        # non-fatal: proceed without local VAD if it fails
+        print(f"⚠️ prewarm: VAD load failed: {e}")
+        proc.userdata["vad"] = None
 
-# ======================================================
-# 🎬 AGENT SESSION MANAGEMENT
-# ======================================================
+# -----------------------
+# Entrypoint
+# -----------------------
 async def entrypoint(ctx: JobContext):
-    """🎬 Main agent entrypoint - handles customer sessions"""
     ctx.log_context_fields = {"room": ctx.room.name}
+    print("\n=== WELLNESS AGENT STARTING ===")
+    print("Logs folder:", get_logs_folder())
 
-    print("\n" + "🏪" * 25)
-    print("🚀 BREW & BEAN CAFE - AI BARISTA")
-    print("👨‍⚕️ Tutorial by Dr. Abhishek")
-    print("📺 YouTube: https://www.youtube.com/@drabhishek.5460/videos")
-    print("📁 Orders folder:", get_orders_folder())
-    print("🎤 Ready to take customer orders!")
-    print("🏪" * 25 + "\n")
+    history = load_history()
+    userdata = Userdata(wellness=WellnessState(), history=history)
 
-    # Run test to verify everything works
-    test_order_saving()
+    # Build greeting: if history present, provide full recap before asking today's mood
+    if history:
+        last = history[-1]
+        greeting = (
+            "Hi — welcome back. I see your last check-in:\n"
+            f"- Mood: {last.get('mood', 'n/a')}\n"
+            f"- Energy: {last.get('energy', 'n/a')}\n"
+            f"- Stress: {last.get('stress', 'n/a')}\n"
+            f"- Goals: {', '.join(last.get('goals', [])) or 'none'}.\n"
+            "now tell me How are you feeling right now?"
+        )
+    else:
+        greeting = "Hi! It's nice to meet you — I do a short daily check-in. How are you feeling right now?"
 
-    # Create user session data with empty order
-    userdata = Userdata(order=create_empty_order())
-    
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    print(f"\n🆕 NEW CUSTOMER SESSION: {session_id}")
-    print(f"📝 Initial order state: {userdata.order.get_summary()}\n")
-
-    # Create session with userdata
     session = AgentSession(
         stt=deepgram.STT(model="nova-3"),
         llm=google.LLM(model="gemini-2.5-flash"),
         tts=murf.TTS(
-            voice="en-US-matthew",
+            voice="tanushree",   # female voice from Murf voice list
             style="Conversation",
             text_pacing=True,
         ),
         turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
-        userdata=userdata,  # Pass userdata to session
+        vad=ctx.proc.userdata.get("vad"),
+        userdata=userdata
     )
 
-    # Metrics collection
+    # start session (no unsupported kwargs)
+    try:
+        await session.start(
+            agent=WellnessAgent(history),
+            room=ctx.room,
+            room_input_options=RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVC()
+            )
+        )
+    except TypeError as e:
+        # defensive: if start signature differs in your environment, print and re-raise
+        print(f"❌ session.start() error: {e}")
+        raise
+
+    # Send greeting text to the user (this will be converted to TTS)
+    try:
+        await session.send_text(greeting)
+    except Exception as e:
+        # fallback: just log
+        print(f"⚠️ send_text failed: {e}")
+
+    # collect metrics (optional)
     usage_collector = metrics.UsageCollector()
     @session.on("metrics_collected")
     def _on_metrics(ev: MetricsCollectedEvent):
         usage_collector.collect(ev.metrics)
 
-    await session.start(
-        agent=BaristaAgent(),
-        room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC()
-        ),
-    )
-
+    # connect the job to allow the session lifecycle
     await ctx.connect()
 
-# ======================================================
-# ⚡ APPLICATION BOOTSTRAP & LAUNCH
-# ======================================================
+# -----------------------
+# Run worker
+# -----------------------
 if __name__ == "__main__":
-    print("\n" + "⚡" * 25)
-    print("🎬 STARTING COFFEE SHOP AGENT...")
-    print("👨‍⚕️ Developed from Dr. Abhishek's Tutorial")
-    print("📺 SUBSCRIBE: https://www.youtube.com/@drabhishek.5460/videos")
-    print("⚡" * 25 + "\n")
-    
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm
+        )
+    )
