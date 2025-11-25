@@ -202,7 +202,7 @@ class TutorAgent(Agent):
         
         super().__init__(
             instructions=f"""
-            You are an Biology Tutor designed to help users master concepts like DNA and Cells.
+            You are an Biology Tutor designed to help users master concepts like DNA and Cell.
             
             📚 **AVAILABLE TOPICS:** {topic_list}
             
